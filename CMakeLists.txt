@@ -19,6 +19,7 @@ target_sources(pbAudioPlayer
         Source/WaveformComponent.cpp
         Source/PeakMeterComponent.cpp
         Source/TimeScaleComponent.cpp
+        icon.rc
 )
 
 target_compile_definitions(pbAudioPlayer
