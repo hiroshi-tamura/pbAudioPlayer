@@ -1,0 +1,13 @@
+build*/
+*.exe
+*.obj
+*.lib
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.user
+.vs/
+CMakeSettings.json
+*.png
+.serena/
