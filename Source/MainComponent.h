@@ -89,6 +89,7 @@ private:
     bool singleInstance = true;
     bool loadToMemory = false;
     bool showAllChannels = false;
+    bool useJapanese = false; // false = English (default), true = Japanese
     int volume = 100;
     int64_t tempMaxSize = 1073741824; // 1GB
 
@@ -142,8 +143,13 @@ private:
         idTempSize1GB,
         idTempSize2GB,
         idTempSize5GB,
-        idAbout
+        idAbout,
+        idLangEnglish,
+        idLangJapanese
     };
+
+    // Localization helper
+    juce::String tr(const char* en, const char* jaUtf8) const;
 
     static constexpr int splitterWidth = 4;
 

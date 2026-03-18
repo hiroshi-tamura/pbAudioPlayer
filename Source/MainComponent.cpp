@@ -312,12 +312,17 @@ void MainComponent::resized()
 //==============================================================================
 // MenuBarModel
 //==============================================================================
+juce::String MainComponent::tr(const char* en, const char* jaUtf8) const
+{
+    return useJapanese ? juce::String::fromUTF8(jaUtf8) : juce::String(en);
+}
+
 juce::StringArray MainComponent::getMenuBarNames()
 {
     juce::StringArray names;
-    names.add(juce::String::fromUTF8("\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab"));
-    names.add(juce::String::fromUTF8("\xe8\xa8\xad\xe5\xae\x9a"));
-    names.add(juce::String::fromUTF8("\xe3\x83\x98\xe3\x83\xab\xe3\x83\x97"));
+    names.add(tr("File", "\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab"));
+    names.add(tr("Settings", "\xe8\xa8\xad\xe5\xae\x9a"));
+    names.add(tr("Help", "\xe3\x83\x98\xe3\x83\xab\xe3\x83\x97"));
     return names;
 }
 
@@ -327,21 +332,21 @@ juce::PopupMenu MainComponent::getMenuForIndex(int menuIndex, const juce::String
 
     if (menuIndex == 0)
     {
-        menu.addItem(idOpenFile, juce::String::fromUTF8("\xe9\x96\x8b\xe3\x81\x8f"));
+        menu.addItem(idOpenFile, tr("Open", "\xe9\x96\x8b\xe3\x81\x8f"));
         menu.addSeparator();
-        menu.addItem(idExit, juce::String::fromUTF8("\xe7\xb5\x82\xe4\xba\x86"));
+        menu.addItem(idExit, tr("Exit", "\xe7\xb5\x82\xe4\xba\x86"));
     }
     else if (menuIndex == 1)
     {
-        menu.addItem(idAutoPlay, juce::String::fromUTF8("\xe8\x87\xaa\xe5\x8b\x95\xe5\x86\x8d\xe7\x94\x9f"), true, autoPlay);
-        menu.addItem(idAlwaysOnTop, juce::String::fromUTF8("\xe5\xb8\xb8\xe3\x81\xab\xe6\x9c\x80\xe5\x89\x8d\xe9\x9d\xa2"), true, alwaysOnTop);
-        menu.addItem(idSingleInstance, juce::String::fromUTF8("\xe3\x82\xb7\xe3\x83\xb3\xe3\x82\xb0\xe3\x83\xab\xe3\x82\xa4\xe3\x83\xb3\xe3\x82\xb9\xe3\x82\xbf\xe3\x83\xb3\xe3\x82\xb9"), true, singleInstance);
-        menu.addItem(idLoadToMemory, juce::String::fromUTF8("\xe9\x9f\xb3\xe5\xa3\xb0\xe3\x82\x92\xe3\x83\xa1\xe3\x83\xa2\xe3\x83\xaa\xe3\x81\xab\xe5\xb1\x95\xe9\x96\x8b"), true, loadToMemory);
-        menu.addItem(idShowAllChannels, juce::String::fromUTF8("\xe5\x85\xa8\xe3\x83\x81\xe3\x83\xa3\xe3\x83\x8d\xe3\x83\xab\xe8\xa1\xa8\xe7\xa4\xba"), true, showAllChannels);
+        menu.addItem(idAutoPlay, tr("Auto Play", "\xe8\x87\xaa\xe5\x8b\x95\xe5\x86\x8d\xe7\x94\x9f"), true, autoPlay);
+        menu.addItem(idAlwaysOnTop, tr("Always on Top", "\xe5\xb8\xb8\xe3\x81\xab\xe6\x9c\x80\xe5\x89\x8d\xe9\x9d\xa2"), true, alwaysOnTop);
+        menu.addItem(idSingleInstance, tr("Single Instance", "\xe3\x82\xb7\xe3\x83\xb3\xe3\x82\xb0\xe3\x83\xab\xe3\x82\xa4\xe3\x83\xb3\xe3\x82\xb9\xe3\x82\xbf\xe3\x83\xb3\xe3\x82\xb9"), true, singleInstance);
+        menu.addItem(idLoadToMemory, tr("Load to Memory", "\xe9\x9f\xb3\xe5\xa3\xb0\xe3\x82\x92\xe3\x83\xa1\xe3\x83\xa2\xe3\x83\xaa\xe3\x81\xab\xe5\xb1\x95\xe9\x96\x8b"), true, loadToMemory);
+        menu.addItem(idShowAllChannels, tr("Show All Channels", "\xe5\x85\xa8\xe3\x83\x81\xe3\x83\xa3\xe3\x83\x8d\xe3\x83\xab\xe8\xa1\xa8\xe7\xa4\xba"), true, showAllChannels);
         menu.addSeparator();
 
         juce::PopupMenu tempMenu;
-        tempMenu.addItem(idClearTemp, juce::String::fromUTF8("\xe4\xb8\x80\xe6\x99\x82\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab\xe3\x82\x92\xe3\x81\x99\xe3\x81\xb9\xe3\x81\xa6\xe5\x89\x8a\xe9\x99\xa4"));
+        tempMenu.addItem(idClearTemp, tr("Clear All Temp Files", "\xe4\xb8\x80\xe6\x99\x82\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab\xe3\x82\x92\xe3\x81\x99\xe3\x81\xb9\xe3\x81\xa6\xe5\x89\x8a\xe9\x99\xa4"));
 
         juce::PopupMenu sizeMenu;
         sizeMenu.addItem(idTempSize500MB, "500MB", true, tempMaxSize == 524288000LL);
@@ -349,12 +354,19 @@ juce::PopupMenu MainComponent::getMenuForIndex(int menuIndex, const juce::String
         sizeMenu.addItem(idTempSize2GB, "2GB", true, tempMaxSize == 2147483648LL);
         sizeMenu.addItem(idTempSize5GB, "5GB", true, tempMaxSize == 5368709120LL);
 
-        tempMenu.addSubMenu(juce::String::fromUTF8("\xe4\xb8\x80\xe6\x99\x82\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab\xe6\x9c\x80\xe5\xa4\xa7\xe3\x82\xb5\xe3\x82\xa4\xe3\x82\xba"), sizeMenu);
-        menu.addSubMenu(juce::String::fromUTF8("\xe4\xb8\x80\xe6\x99\x82\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab\xe7\xae\xa1\xe7\x90\x86"), tempMenu);
+        tempMenu.addSubMenu(tr("Max Temp Size", "\xe4\xb8\x80\xe6\x99\x82\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab\xe6\x9c\x80\xe5\xa4\xa7\xe3\x82\xb5\xe3\x82\xa4\xe3\x82\xba"), sizeMenu);
+        menu.addSubMenu(tr("Temp File Management", "\xe4\xb8\x80\xe6\x99\x82\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab\xe7\xae\xa1\xe7\x90\x86"), tempMenu);
+
+        // Language submenu
+        menu.addSeparator();
+        juce::PopupMenu langMenu;
+        langMenu.addItem(idLangEnglish, "English", true, !useJapanese);
+        langMenu.addItem(idLangJapanese, "Japanese", true, useJapanese);
+        menu.addSubMenu("Language", langMenu);
     }
     else if (menuIndex == 2)
     {
-        menu.addItem(idAbout, juce::String::fromUTF8("\xe3\x81\x93\xe3\x81\xae\xe3\x83\x97\xe3\x83\xac\xe3\x82\xa4\xe3\x83\xa4\xe3\x83\xbc\xe3\x81\xab\xe3\x81\xa4\xe3\x81\x84\xe3\x81\xa6"));
+        menu.addItem(idAbout, tr("About this Player", "\xe3\x81\x93\xe3\x81\xae\xe3\x83\x97\xe3\x83\xac\xe3\x82\xa4\xe3\x83\xa4\xe3\x83\xbc\xe3\x81\xab\xe3\x81\xa4\xe3\x81\x84\xe3\x81\xa6"));
     }
 
     return menu;
@@ -367,7 +379,7 @@ void MainComponent::menuItemSelected(int menuItemID, int /*topLevelMenuIndex*/)
         case idOpenFile:
         {
             auto chooser = std::make_shared<juce::FileChooser>(
-                juce::String::fromUTF8("\xe9\x9f\xb3\xe5\xa3\xb0\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab\xe3\x82\x92\xe9\x96\x8b\xe3\x81\x8f"),
+                tr("Open Audio File", "\xe9\x9f\xb3\xe5\xa3\xb0\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab\xe3\x82\x92\xe9\x96\x8b\xe3\x81\x8f"),
                 juce::File{},
                 formatManager.getWildcardForAllFormats());
 
@@ -432,6 +444,20 @@ void MainComponent::menuItemSelected(int menuItemID, int /*topLevelMenuIndex*/)
                 "pbAudioPlayer v1.0.0\nBuilt with JUCE 8");
             break;
         }
+
+        case idLangEnglish:
+            useJapanese = false;
+            menuBar.setModel(nullptr);
+            menuBar.setModel(this);
+            menuBar.repaint();
+            break;
+
+        case idLangJapanese:
+            useJapanese = true;
+            menuBar.setModel(nullptr);
+            menuBar.setModel(this);
+            menuBar.repaint();
+            break;
 
         default:
             break;
@@ -1216,6 +1242,7 @@ void MainComponent::loadSettings()
     singleInstance = xml->getBoolAttribute("SingleInstance", true);
     loadToMemory = xml->getBoolAttribute("LoadToMemory", false);
     showAllChannels = xml->getBoolAttribute("ShowAllChannels", false);
+    useJapanese = xml->getBoolAttribute("UseJapanese", false);
     volume = xml->getIntAttribute("Volume", 100);
     tempMaxSize = xml->getStringAttribute("TempFolderMaxSize", "1073741824").getLargeIntValue();
     peakMeterWidth = xml->getIntAttribute("PeakMeterWidth", 80);
@@ -1251,6 +1278,7 @@ void MainComponent::saveSettings()
     xml->setAttribute("SingleInstance", singleInstance);
     xml->setAttribute("LoadToMemory", loadToMemory);
     xml->setAttribute("ShowAllChannels", showAllChannels);
+    xml->setAttribute("UseJapanese", useJapanese);
     xml->setAttribute("Volume", volume);
     xml->setAttribute("TempFolderMaxSize", juce::String(tempMaxSize));
     xml->setAttribute("PeakMeterWidth", peakMeterWidth);
