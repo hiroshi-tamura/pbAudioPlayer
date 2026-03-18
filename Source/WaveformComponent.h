@@ -83,7 +83,7 @@ private:
     static constexpr int dbScaleWidth = 30;
 
     // Drawing helpers
-    void drawDbScale(juce::Graphics& g, int height, int yOffset = 0);
+    void drawDbScale(juce::Graphics& g, int height, int yOffset = 0, int channelLabel = -1);
     void drawWaveformMono(juce::Graphics& g, int x, int w, int h);
     void drawWaveformAllChannels(juce::Graphics& g, int x, int w, int h);
     void drawSpectrogram(juce::Graphics& g, int x, int w, int h);

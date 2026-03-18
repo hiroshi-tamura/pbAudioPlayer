@@ -66,7 +66,7 @@ void WaveformComponent::paint(juce::Graphics& g)
         int numCh = (int)allChannelSamples.size();
         float chH = (float)h / (float)numCh;
         for (int ch = 0; ch < numCh; ++ch)
-            drawDbScale(g, (int)chH, (int)(ch * chH));
+            drawDbScale(g, (int)chH, (int)(ch * chH), ch + 1);
     }
     else
     {
@@ -178,13 +178,22 @@ void WaveformComponent::resized()
 // ---------------------------------------------------------------------------
 // drawDbScale
 // ---------------------------------------------------------------------------
-void WaveformComponent::drawDbScale(juce::Graphics& g, int height, int yOffset)
+void WaveformComponent::drawDbScale(juce::Graphics& g, int height, int yOffset, int channelLabel)
 {
     // Background
     g.setColour(juce::Colour(0xFF333333));
     g.fillRect(0, yOffset, dbScaleWidth, height);
 
     if (height < 20) return;
+
+    // Channel number label at top-left
+    if (channelLabel > 0)
+    {
+        g.setColour(juce::Colour(0xddffcc00)); // bright yellow
+        g.setFont(10.0f);
+        g.drawText(juce::String(channelLabel), 2, yOffset + 2, 14, 12,
+                   juce::Justification::centredLeft, false);
+    }
 
     // Clip to this channel's region
     g.saveState();

@@ -90,6 +90,7 @@ private:
     bool loadToMemory = false;
     bool showAllChannels = false;
     bool useJapanese = false; // false = English (default), true = Japanese
+    bool panLawMono = false;  // 1ch → 2ch pan law output
     int volume = 100;
     int64_t tempMaxSize = 1073741824; // 1GB
 
@@ -145,7 +146,8 @@ private:
         idTempSize5GB,
         idAbout,
         idLangEnglish,
-        idLangJapanese
+        idLangJapanese,
+        idPanLawMono
     };
 
     // Localization helper

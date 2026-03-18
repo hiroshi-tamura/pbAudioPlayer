@@ -8,6 +8,8 @@ class MeteringSource : public juce::AudioSource
 public:
     MeteringSource(juce::AudioSource* source) : innerSource(source) {}
 
+    void setPanLawGain(float gain) { panLawGain.store(gain, std::memory_order_relaxed); }
+
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override
     {
         innerSource->prepareToPlay(samplesPerBlockExpected, sampleRate);
@@ -21,6 +23,11 @@ public:
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
     {
         innerSource->getNextAudioBlock(info);
+
+        // Apply pan law gain if set (for mono→stereo)
+        float plGain = panLawGain.load(std::memory_order_relaxed);
+        if (plGain < 1.0f)
+            info.buffer->applyGain(info.startSample, info.numSamples, plGain);
 
         int numCh = info.buffer->getNumChannels();
         if (numCh > maxChannels)
@@ -53,6 +60,7 @@ private:
     juce::AudioSource* innerSource = nullptr;
     std::atomic<float> peaks[32] = {};
     std::atomic<int> numActiveChannels{2};
+    std::atomic<float> panLawGain{1.0f};
 };
 
 // File-scope metering source pointer, managed by MainComponent lifetime
@@ -343,6 +351,7 @@ juce::PopupMenu MainComponent::getMenuForIndex(int menuIndex, const juce::String
         menu.addItem(idSingleInstance, tr("Single Instance", "\xe3\x82\xb7\xe3\x83\xb3\xe3\x82\xb0\xe3\x83\xab\xe3\x82\xa4\xe3\x83\xb3\xe3\x82\xb9\xe3\x82\xbf\xe3\x83\xb3\xe3\x82\xb9"), true, singleInstance);
         menu.addItem(idLoadToMemory, tr("Load to Memory", "\xe9\x9f\xb3\xe5\xa3\xb0\xe3\x82\x92\xe3\x83\xa1\xe3\x83\xa2\xe3\x83\xaa\xe3\x81\xab\xe5\xb1\x95\xe9\x96\x8b"), true, loadToMemory);
         menu.addItem(idShowAllChannels, tr("Show All Channels", "\xe5\x85\xa8\xe3\x83\x81\xe3\x83\xa3\xe3\x83\x8d\xe3\x83\xab\xe8\xa1\xa8\xe7\xa4\xba"), true, showAllChannels);
+        menu.addItem(idPanLawMono, tr("1ch to 2ch PanLaw", "1ch\xe3\x82\x92" "2ch\xe3\x81\xab" "PanLaw"), true, panLawMono);
         menu.addSeparator();
 
         juce::PopupMenu tempMenu;
@@ -445,6 +454,28 @@ void MainComponent::menuItemSelected(int menuItemID, int /*topLevelMenuIndex*/)
             break;
         }
 
+        case idPanLawMono:
+            panLawMono = !panLawMono;
+            if (s_meteringSource)
+                s_meteringSource->setPanLawGain((panLawMono && fileNumChannels == 1) ? 0.7071f : 1.0f);
+            // Reconnect source if currently loaded mono
+            if (audioLoaded && fileNumChannels == 1)
+            {
+                double pos = transportSource.getCurrentPosition();
+                bool wasPlaying = isPlaying;
+                transportSource.stop();
+                transportSource.setSource(nullptr);
+                readerSource.reset();
+
+                readerSource = std::make_unique<juce::AudioFormatReaderSource>(currentReader.get(), false);
+                int outCh = (panLawMono && fileNumChannels == 1) ? 2 : fileNumChannels;
+                transportSource.setSource(readerSource.get(), 0, nullptr,
+                                          currentReader->sampleRate, outCh);
+                transportSource.setPosition(pos);
+                if (wasPlaying) play();
+            }
+            break;
+
         case idLangEnglish:
             useJapanese = false;
             menuBar.setModel(nullptr);
@@ -493,13 +524,14 @@ void MainComponent::loadAudioFile(const juce::File& file)
 
     // Create reader source and connect to transport
     readerSource = std::make_unique<juce::AudioFormatReaderSource>(currentReader.get(), false);
+    int numCh = (int)currentReader->numChannels;
+    int outCh = (panLawMono && numCh == 1) ? 2 : numCh;
     transportSource.setSource(readerSource.get(), 0, nullptr,
-                              currentReader->sampleRate,
-                              (int)currentReader->numChannels);
+                              currentReader->sampleRate, outCh);
 
     // Extract audio info (lightweight, instant)
     fileSampleRate = (int)currentReader->sampleRate;
-    fileNumChannels = (int)currentReader->numChannels;
+    fileNumChannels = numCh;
     fileBitDepth = detectBitDepth(file);
     audioLoaded = true;
 
@@ -521,6 +553,10 @@ void MainComponent::loadAudioFile(const juce::File& file)
     if (auto* tlw = getTopLevelComponent())
         if (auto* dw = dynamic_cast<juce::DocumentWindow*>(tlw))
             dw->setName("pbAudioPlayer - " + file.getFileName());
+
+    // Apply pan law gain for mono→stereo
+    if (s_meteringSource)
+        s_meteringSource->setPanLawGain((panLawMono && fileNumChannels == 1) ? 0.7071f : 1.0f);
 
     // AUTO-PLAY IMMEDIATELY (before heavy processing)
     if (autoPlay)
@@ -1243,6 +1279,7 @@ void MainComponent::loadSettings()
     loadToMemory = xml->getBoolAttribute("LoadToMemory", false);
     showAllChannels = xml->getBoolAttribute("ShowAllChannels", false);
     useJapanese = xml->getBoolAttribute("UseJapanese", false);
+    panLawMono = xml->getBoolAttribute("PanLawMono", false);
     volume = xml->getIntAttribute("Volume", 100);
     tempMaxSize = xml->getStringAttribute("TempFolderMaxSize", "1073741824").getLargeIntValue();
     peakMeterWidth = xml->getIntAttribute("PeakMeterWidth", 80);
@@ -1279,6 +1316,7 @@ void MainComponent::saveSettings()
     xml->setAttribute("LoadToMemory", loadToMemory);
     xml->setAttribute("ShowAllChannels", showAllChannels);
     xml->setAttribute("UseJapanese", useJapanese);
+    xml->setAttribute("PanLawMono", panLawMono);
     xml->setAttribute("Volume", volume);
     xml->setAttribute("TempFolderMaxSize", juce::String(tempMaxSize));
     xml->setAttribute("PeakMeterWidth", peakMeterWidth);
