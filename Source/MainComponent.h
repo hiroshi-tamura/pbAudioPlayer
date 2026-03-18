@@ -64,12 +64,15 @@ private:
     PeakMeterComponent peakMeterComponent;
     TimeScaleComponent timeScaleComponent;
     juce::Slider volumeSlider;
+    juce::Slider fftSlider;
     juce::Label statusLeftLabel;
     juce::Label statusRightLabel;
+    juce::Label statusLoudnessLabel;
     std::unique_ptr<juce::Component> resizerBar;
 
     // Audio data
     std::vector<float> monoSamples;
+    std::vector<std::vector<float>> allChannelSamples;
     int fileSampleRate = 0;
     int fileNumChannels = 0;
     juce::String fileBitDepth;
@@ -85,8 +88,15 @@ private:
     bool alwaysOnTop = true;
     bool singleInstance = true;
     bool loadToMemory = false;
+    bool showAllChannels = false;
     int volume = 100;
     int64_t tempMaxSize = 1073741824; // 1GB
+
+    // Loudness (EBU R128)
+    float loudnessI = -70.0f;  // Integrated
+    float loudnessM = -70.0f;  // Momentary (400ms)
+    float loudnessS = -70.0f;  // Short-term (3s)
+    float loudnessLRA = 0.0f;  // Loudness Range
 
     // Window bounds from settings
     juce::Rectangle<int> savedWindowBounds;
@@ -107,6 +117,7 @@ private:
 
     void updatePositionDisplay();
     void updatePeakLevels();
+    void computeLoudness();
 
     juce::String formatTime(double seconds) const;
     juce::String detectBitDepth(const juce::File& file) const;
@@ -125,6 +136,7 @@ private:
         idAlwaysOnTop,
         idSingleInstance,
         idLoadToMemory,
+        idShowAllChannels,
         idClearTemp,
         idTempSize500MB,
         idTempSize1GB,

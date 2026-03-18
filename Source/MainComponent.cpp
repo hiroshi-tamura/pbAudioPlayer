@@ -119,6 +119,22 @@ MainComponent::MainComponent()
     volumeSlider.setPopupDisplayEnabled(true, false, this);
     volumeSlider.setTooltip("Volume: 100");
 
+    // FFT blend slider
+    fftSlider.setRange(0.0, 1.0, 0.01);
+    fftSlider.setValue(0.0, juce::dontSendNotification);
+    fftSlider.setTextBoxStyle(juce::Slider::NoTextBox, true, 0, 0);
+    fftSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    fftSlider.setColour(juce::Slider::backgroundColourId, juce::Colour(0xff555555));
+    fftSlider.setColour(juce::Slider::trackColourId, juce::Colour(0xff888888));
+    fftSlider.setColour(juce::Slider::thumbColourId, juce::Colour(0xffcccccc));
+    fftSlider.onValueChange = [this]()
+    {
+        waveformComponent.setFFTBlend((float)fftSlider.getValue());
+    };
+    addAndMakeVisible(fftSlider);
+    fftSlider.setPopupDisplayEnabled(true, false, this);
+    fftSlider.setTooltip(juce::String::fromUTF8("Waveform \xe2\x86\x94 Spectrum"));
+
     // Status labels
     statusLeftLabel.setText("0kHz/0bit/0ch", juce::dontSendNotification);
     statusLeftLabel.setColour(juce::Label::textColourId, juce::Colours::white);
@@ -132,6 +148,13 @@ MainComponent::MainComponent()
     statusRightLabel.setJustificationType(juce::Justification::centredRight);
     statusRightLabel.setFont(juce::Font(12.0f));
     addAndMakeVisible(statusRightLabel);
+
+    statusLoudnessLabel.setText("", juce::dontSendNotification);
+    statusLoudnessLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+    statusLoudnessLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0x00000000));
+    statusLoudnessLabel.setJustificationType(juce::Justification::centredLeft);
+    statusLoudnessLabel.setFont(juce::Font(12.0f));
+    addAndMakeVisible(statusLoudnessLabel);
 
     // Sub-components
     addAndMakeVisible(menuBar);
@@ -240,12 +263,31 @@ void MainComponent::resized()
 {
     auto bounds = getLocalBounds();
 
-    // Menu bar at top
-    menuBar.setBounds(bounds.removeFromTop(24));
+    // Menu bar at top (24px) with sliders on the right side
+    auto menuArea = bounds.removeFromTop(24);
 
-    // Status bar at bottom
+    // Right side of menu bar: "Vol" label area + volumeSlider + "FFT" label area + fftSlider
+    // Total right area: ~200px
+    int sliderAreaWidth = 200;
+    auto sliderBarArea = menuArea.removeFromRight(sliderAreaWidth);
+
+    // Menu bar gets the rest
+    menuBar.setBounds(menuArea);
+
+    // Layout sliders inside sliderBarArea
+    // "Vol" (20px) + volumeSlider (80px) + gap (4px) + "FFT" (0px) + fftSlider (80px)
+    // We skip text labels to save space and rely on tooltips
+    auto volArea = sliderBarArea.removeFromLeft(90);
+    sliderBarArea.removeFromLeft(4); // gap
+    auto fftArea = sliderBarArea.removeFromLeft(90);
+
+    volumeSlider.setBounds(volArea.reduced(0, 3));
+    fftSlider.setBounds(fftArea.reduced(0, 3));
+
+    // Status bar at bottom (22px) - 3 sections
     auto statusArea = bounds.removeFromBottom(22);
-    statusLeftLabel.setBounds(statusArea.removeFromLeft(statusArea.getWidth() / 2));
+    statusLeftLabel.setBounds(statusArea.removeFromLeft(150));
+    statusLoudnessLabel.setBounds(statusArea.removeFromLeft(220));
     statusRightLabel.setBounds(statusArea);
 
     // Time scale
@@ -265,9 +307,6 @@ void MainComponent::resized()
 
     // Waveform fills the rest
     waveformComponent.setBounds(mainArea);
-
-    // Volume slider at top-right of waveform area
-    volumeSlider.setBounds(mainArea.getRight() - 100, mainArea.getY(), 100, 16);
 }
 
 //==============================================================================
@@ -298,6 +337,7 @@ juce::PopupMenu MainComponent::getMenuForIndex(int menuIndex, const juce::String
         menu.addItem(idAlwaysOnTop, juce::String::fromUTF8("\xe5\xb8\xb8\xe3\x81\xab\xe6\x9c\x80\xe5\x89\x8d\xe9\x9d\xa2"), true, alwaysOnTop);
         menu.addItem(idSingleInstance, juce::String::fromUTF8("\xe3\x82\xb7\xe3\x83\xb3\xe3\x82\xb0\xe3\x83\xab\xe3\x82\xa4\xe3\x83\xb3\xe3\x82\xb9\xe3\x82\xbf\xe3\x83\xb3\xe3\x82\xb9"), true, singleInstance);
         menu.addItem(idLoadToMemory, juce::String::fromUTF8("\xe9\x9f\xb3\xe5\xa3\xb0\xe3\x82\x92\xe3\x83\xa1\xe3\x83\xa2\xe3\x83\xaa\xe3\x81\xab\xe5\xb1\x95\xe9\x96\x8b"), true, loadToMemory);
+        menu.addItem(idShowAllChannels, juce::String::fromUTF8("\xe5\x85\xa8\xe3\x83\x81\xe3\x83\xa3\xe3\x83\x8d\xe3\x83\xab\xe8\xa1\xa8\xe7\xa4\xba"), true, showAllChannels);
         menu.addSeparator();
 
         juce::PopupMenu tempMenu;
@@ -362,6 +402,11 @@ void MainComponent::menuItemSelected(int menuItemID, int /*topLevelMenuIndex*/)
             loadToMemory = !loadToMemory;
             break;
 
+        case idShowAllChannels:
+            showAllChannels = !showAllChannels;
+            waveformComponent.setShowAllChannels(showAllChannels);
+            break;
+
         case idClearTemp:
             clearTempFiles();
             break;
@@ -417,46 +462,8 @@ void MainComponent::loadAudioFile(const juce::File& file)
 
     currentFile = file;
 
-    if (loadToMemory && reader->lengthInSamples > 0)
-    {
-        // Read entire file into memory
-        juce::AudioBuffer<float> buffer((int)reader->numChannels,
-                                        (int)reader->lengthInSamples);
-        reader->read(&buffer, 0, (int)reader->lengthInSamples, 0, true, true);
-
-        auto sampleRate = reader->sampleRate;
-        auto bitsPerSample = reader->bitsPerSample;
-        auto numChannels = reader->numChannels;
-        auto numSamples = reader->lengthInSamples;
-        delete reader;
-
-        // Create MemoryInputStream from buffer
-        juce::WavAudioFormat wavFormat;
-        juce::MemoryBlock memBlock;
-        {
-            auto memStream = std::make_unique<juce::MemoryOutputStream>(memBlock, false);
-            auto* writer = wavFormat.createWriterFor(memStream.get(), sampleRate,
-                                                     (unsigned int)numChannels,
-                                                     (int)bitsPerSample, {}, 0);
-            if (writer != nullptr)
-            {
-                memStream.release(); // writer takes ownership
-                writer->writeFromAudioSampleBuffer(buffer, 0, (int)numSamples);
-                delete writer;
-            }
-        }
-
-        auto memInput = std::make_unique<juce::MemoryInputStream>(memBlock, true);
-        auto* memReader = wavFormat.createReaderFor(memInput.release(), true);
-        if (memReader == nullptr)
-            return;
-
-        currentReader.reset(memReader);
-    }
-    else
-    {
-        currentReader.reset(reader);
-    }
+    // Always start with disk-streaming reader (instant playback)
+    currentReader.reset(reader);
 
     // Create reader source and connect to transport
     readerSource = std::make_unique<juce::AudioFormatReaderSource>(currentReader.get(), false);
@@ -464,41 +471,12 @@ void MainComponent::loadAudioFile(const juce::File& file)
                               currentReader->sampleRate,
                               (int)currentReader->numChannels);
 
-    // Extract audio info
+    // Extract audio info (lightweight, instant)
     fileSampleRate = (int)currentReader->sampleRate;
     fileNumChannels = (int)currentReader->numChannels;
     fileBitDepth = detectBitDepth(file);
     audioLoaded = true;
 
-    // Build mono samples for waveform
-    auto totalSamples = currentReader->lengthInSamples;
-    juce::AudioBuffer<float> readBuffer((int)currentReader->numChannels,
-                                        (int)juce::jmin(totalSamples, (juce::int64)65536));
-    monoSamples.clear();
-    monoSamples.reserve((size_t)totalSamples);
-
-    juce::int64 samplesRemaining = totalSamples;
-    juce::int64 startSample = 0;
-
-    while (samplesRemaining > 0)
-    {
-        int blockSize = (int)juce::jmin(samplesRemaining, (juce::int64)readBuffer.getNumSamples());
-        currentReader->read(&readBuffer, 0, blockSize, startSample, true, true);
-
-        for (int i = 0; i < blockSize; ++i)
-        {
-            float sum = 0.0f;
-            for (int ch = 0; ch < (int)currentReader->numChannels; ++ch)
-                sum += readBuffer.getSample(ch, i);
-            monoSamples.push_back(sum / (float)currentReader->numChannels);
-        }
-
-        startSample += blockSize;
-        samplesRemaining -= blockSize;
-    }
-
-    // Update sub-components
-    waveformComponent.setSamples(monoSamples);
     peakMeterComponent.setChannelCount(fileNumChannels);
     currentPeakLevels.resize((size_t)fileNumChannels, 0.0f);
 
@@ -506,22 +484,416 @@ void MainComponent::loadAudioFile(const juce::File& file)
     timeScaleComponent.setDuration(durationSec);
     waveformComponent.setTotalLengthSeconds(durationSec);
 
-    // Update status labels
+    // Update status labels (instant)
     juce::String srStr = juce::String(fileSampleRate / 1000.0, 1) + "kHz";
     statusLeftLabel.setText(srStr + "/" + fileBitDepth + "/" + juce::String(fileNumChannels) + "ch",
                             juce::dontSendNotification);
-
-    juce::String totalTimeStr = formatTime(durationSec);
-    statusRightLabel.setText("00:00:00/" + totalTimeStr, juce::dontSendNotification);
+    statusRightLabel.setText("00:00:00/" + formatTime(durationSec), juce::dontSendNotification);
+    statusLoudnessLabel.setText("...", juce::dontSendNotification);
 
     // Window title
     if (auto* tlw = getTopLevelComponent())
         if (auto* dw = dynamic_cast<juce::DocumentWindow*>(tlw))
             dw->setName("pbAudioPlayer - " + file.getFileName());
 
-    // Auto-play
+    // AUTO-PLAY IMMEDIATELY (before heavy processing)
     if (autoPlay)
         play();
+
+    // === Heavy processing on background thread ===
+    auto bgFile = currentFile;
+    auto bgSampleRate = fileSampleRate;
+    auto bgNumChannels = fileNumChannels;
+    auto bgBitsPerSample = currentReader->bitsPerSample;
+    bool bgLoadToMemory = loadToMemory;
+
+    std::thread([this, bgFile, bgSampleRate, bgNumChannels, bgBitsPerSample, bgLoadToMemory]()
+    {
+        // Open a separate reader for background work (doesn't interfere with playback)
+        juce::AudioFormatManager bgFmtMgr;
+        bgFmtMgr.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> bgReader(bgFmtMgr.createReaderFor(bgFile));
+        if (bgReader == nullptr) return;
+
+        auto totalSamples = bgReader->lengthInSamples;
+
+        // Build mono + multi-channel samples
+        std::vector<float> bgMono;
+        bgMono.reserve((size_t)totalSamples);
+        std::vector<std::vector<float>> bgAllCh((size_t)bgNumChannels);
+        for (int ch = 0; ch < bgNumChannels; ++ch)
+            bgAllCh[(size_t)ch].reserve((size_t)totalSamples);
+
+        juce::AudioBuffer<float> readBuf(bgNumChannels, 65536);
+        juce::int64 remaining = totalSamples;
+        juce::int64 pos = 0;
+
+        while (remaining > 0)
+        {
+            int block = (int)juce::jmin(remaining, (juce::int64)65536);
+            bgReader->read(&readBuf, 0, block, pos, true, true);
+
+            for (int i = 0; i < block; ++i)
+            {
+                float sum = 0.0f;
+                for (int ch = 0; ch < bgNumChannels; ++ch)
+                {
+                    float s = readBuf.getSample(ch, i);
+                    sum += s;
+                    bgAllCh[(size_t)ch].push_back(s);
+                }
+                bgMono.push_back(sum / (float)bgNumChannels);
+            }
+            pos += block;
+            remaining -= block;
+        }
+
+        bgReader.reset(); // close file handle
+
+        // Post waveform data to UI thread
+        auto monoPtr = std::make_shared<std::vector<float>>(std::move(bgMono));
+        auto allChPtr = std::make_shared<std::vector<std::vector<float>>>(std::move(bgAllCh));
+
+        juce::MessageManager::callAsync([this, monoPtr, allChPtr, bgSampleRate]()
+        {
+            if (!audioLoaded) return;
+            monoSamples = std::move(*monoPtr);
+            allChannelSamples = std::move(*allChPtr);
+
+            waveformComponent.setSamples(monoSamples);
+            waveformComponent.setAllChannelSamples(allChannelSamples);
+
+            // Compute loudness
+            computeLoudness();
+            juce::String loudStr;
+            loudStr += juce::String::formatted("I:%.1f", loudnessI);
+            loudStr += juce::String::formatted(" M:%.1f", loudnessM);
+            loudStr += juce::String::formatted(" S:%.1f", loudnessS);
+            loudStr += juce::String::formatted(" LRA:%.1f", loudnessLRA);
+            statusLoudnessLabel.setText(loudStr, juce::dontSendNotification);
+
+            // Compute spectrogram
+            waveformComponent.computeSpectrogram(bgSampleRate);
+        });
+
+        // If loadToMemory, also prepare memory source and swap
+        if (bgLoadToMemory)
+        {
+            juce::AudioFormatManager bgFmtMgr2;
+            bgFmtMgr2.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> bgReader2(bgFmtMgr2.createReaderFor(bgFile));
+            if (bgReader2 == nullptr) return;
+
+            juce::AudioBuffer<float> buf((int)bgReader2->numChannels, (int)bgReader2->lengthInSamples);
+            bgReader2->read(&buf, 0, (int)bgReader2->lengthInSamples, 0, true, true);
+            auto numSamp = bgReader2->lengthInSamples;
+            bgReader2.reset();
+
+            juce::WavAudioFormat wavFmt;
+            juce::MemoryBlock memBlock;
+            {
+                auto memOut = std::make_unique<juce::MemoryOutputStream>(memBlock, false);
+                auto* writer = wavFmt.createWriterFor(memOut.get(), (double)bgSampleRate,
+                    (unsigned int)bgNumChannels, (int)bgBitsPerSample, {}, 0);
+                if (writer == nullptr) return;
+                memOut.release();
+                writer->writeFromAudioSampleBuffer(buf, 0, (int)numSamp);
+                delete writer;
+            }
+
+            auto memBlockPtr = std::make_shared<juce::MemoryBlock>(std::move(memBlock));
+
+            juce::MessageManager::callAsync([this, memBlockPtr, bgSampleRate, bgNumChannels]()
+            {
+                if (!audioLoaded) return;
+                double curPos = transportSource.getCurrentPosition();
+                bool wasPlaying = isPlaying;
+
+                transportSource.stop();
+                transportSource.setSource(nullptr);
+                readerSource.reset();
+                currentReader.reset();
+
+                juce::WavAudioFormat wavFmt2;
+                auto memIn = std::make_unique<juce::MemoryInputStream>(*memBlockPtr, false);
+                auto* memReader = wavFmt2.createReaderFor(memIn.release(), true);
+                if (memReader == nullptr) return;
+
+                currentReader.reset(memReader);
+                readerSource = std::make_unique<juce::AudioFormatReaderSource>(currentReader.get(), false);
+                transportSource.setSource(readerSource.get(), 0, nullptr, (double)bgSampleRate, bgNumChannels);
+                transportSource.setPosition(curPos);
+
+                if (wasPlaying) play();
+            });
+        }
+    }).detach();
+}
+
+//==============================================================================
+// Loudness computation (EBU R128 simplified)
+//==============================================================================
+void MainComponent::computeLoudness()
+{
+    if (monoSamples.empty() || fileSampleRate <= 0)
+    {
+        loudnessI = -70.0f;
+        loudnessM = -70.0f;
+        loudnessS = -70.0f;
+        loudnessLRA = 0.0f;
+        return;
+    }
+
+    const size_t totalSamples = monoSamples.size();
+
+    // Helper lambda: get sample with looping for short files
+    auto getSample = [&](size_t index) -> float
+    {
+        return monoSamples[index % totalSamples];
+    };
+
+    // Helper lambda: compute RMS (linear) for a range with looping
+    auto computeRMS = [&](size_t start, size_t count) -> double
+    {
+        double sumSq = 0.0;
+        for (size_t i = 0; i < count; ++i)
+        {
+            float s = getSample(start + i);
+            sumSq += (double)s * (double)s;
+        }
+        return sumSq / (double)count;
+    };
+
+    // Block size for 400ms
+    size_t block400ms = (size_t)((double)fileSampleRate * 0.4);
+    if (block400ms < 1) block400ms = 1;
+
+    // Block size for 3s
+    size_t block3s = (size_t)((double)fileSampleRate * 3.0);
+    if (block3s < 1) block3s = 1;
+
+    // --- Momentary (M): RMS of last 400ms (use end of file) ---
+    {
+        size_t windowSize = block400ms;
+        // If file is shorter than 400ms, loop samples to fill the window
+        size_t startPos = (totalSamples >= windowSize) ? (totalSamples - windowSize) : 0;
+        size_t count = (totalSamples >= windowSize) ? windowSize : windowSize; // always use full window
+        // For short files, we loop
+        double meanSq = 0.0;
+        if (totalSamples >= windowSize)
+        {
+            meanSq = computeRMS(startPos, windowSize);
+        }
+        else
+        {
+            // Loop samples to fill 400ms
+            double sumSq = 0.0;
+            for (size_t i = 0; i < windowSize; ++i)
+            {
+                float s = getSample(i);
+                sumSq += (double)s * (double)s;
+            }
+            meanSq = sumSq / (double)windowSize;
+        }
+        if (meanSq > 0.0)
+            loudnessM = (float)(-0.691 + 10.0 * std::log10(meanSq));
+        else
+            loudnessM = -70.0f;
+    }
+
+    // --- Short-term (S): RMS of last 3s ---
+    {
+        size_t windowSize = block3s;
+        double meanSq = 0.0;
+        if (totalSamples >= windowSize)
+        {
+            meanSq = computeRMS(totalSamples - windowSize, windowSize);
+        }
+        else
+        {
+            // Loop samples to fill 3s
+            double sumSq = 0.0;
+            for (size_t i = 0; i < windowSize; ++i)
+            {
+                float s = getSample(i);
+                sumSq += (double)s * (double)s;
+            }
+            meanSq = sumSq / (double)windowSize;
+        }
+        if (meanSq > 0.0)
+            loudnessS = (float)(-0.691 + 10.0 * std::log10(meanSq));
+        else
+            loudnessS = -70.0f;
+    }
+
+    // --- Integrated (I): Gated measurement over entire file ---
+    {
+        // Compute RMS in 400ms blocks (non-overlapping)
+        size_t effectiveSamples = totalSamples;
+        // For very short files, loop to at least one block
+        if (effectiveSamples < block400ms)
+            effectiveSamples = block400ms;
+
+        std::vector<double> blockMeanSq;
+        size_t numBlocks = effectiveSamples / block400ms;
+        if (numBlocks < 1) numBlocks = 1;
+
+        blockMeanSq.reserve(numBlocks);
+        for (size_t b = 0; b < numBlocks; ++b)
+        {
+            size_t start = b * block400ms;
+            double sumSq = 0.0;
+            for (size_t i = 0; i < block400ms; ++i)
+            {
+                float s = getSample(start + i);
+                sumSq += (double)s * (double)s;
+            }
+            blockMeanSq.push_back(sumSq / (double)block400ms);
+        }
+
+        // Absolute gate at -70 LUFS
+        double absGateThreshold = std::pow(10.0, (-70.0 + 0.691) / 10.0);
+
+        // First pass: compute ungated mean (above absolute gate)
+        double ungatedSum = 0.0;
+        int ungatedCount = 0;
+        for (auto ms : blockMeanSq)
+        {
+            if (ms > absGateThreshold)
+            {
+                ungatedSum += ms;
+                ungatedCount++;
+            }
+        }
+
+        if (ungatedCount == 0)
+        {
+            loudnessI = -70.0f;
+        }
+        else
+        {
+            double ungatedMean = ungatedSum / (double)ungatedCount;
+            double ungatedLUFS = -0.691 + 10.0 * std::log10(ungatedMean);
+
+            // Relative gate at -10 LUFS from ungated mean
+            double relGateThreshold = std::pow(10.0, (ungatedLUFS - 10.0 + 0.691) / 10.0);
+
+            // Second pass: compute gated mean (above both gates)
+            double gatedSum = 0.0;
+            int gatedCount = 0;
+            for (auto ms : blockMeanSq)
+            {
+                if (ms > absGateThreshold && ms > relGateThreshold)
+                {
+                    gatedSum += ms;
+                    gatedCount++;
+                }
+            }
+
+            if (gatedCount > 0)
+            {
+                double gatedMean = gatedSum / (double)gatedCount;
+                loudnessI = (float)(-0.691 + 10.0 * std::log10(gatedMean));
+            }
+            else
+            {
+                loudnessI = -70.0f;
+            }
+        }
+    }
+
+    // --- LRA: Loudness Range (10th to 95th percentile of short-term blocks) ---
+    {
+        // 3s blocks with 75% overlap (step = 0.75s)
+        size_t stepSize = (size_t)((double)fileSampleRate * 0.75);
+        if (stepSize < 1) stepSize = 1;
+
+        size_t effectiveSamples = totalSamples;
+        if (effectiveSamples < block3s)
+            effectiveSamples = block3s;
+
+        std::vector<double> stLoudness;
+        size_t numBlocks = 0;
+        if (effectiveSamples >= block3s)
+            numBlocks = (effectiveSamples - block3s) / stepSize + 1;
+        if (numBlocks < 1)
+            numBlocks = 1;
+
+        // Absolute gate threshold for LRA (-70 LUFS)
+        double absGateThreshold = std::pow(10.0, (-70.0 + 0.691) / 10.0);
+
+        // Compute short-term loudness values
+        std::vector<double> stMeanSq;
+        stMeanSq.reserve(numBlocks);
+        for (size_t b = 0; b < numBlocks; ++b)
+        {
+            size_t start = b * stepSize;
+            double sumSq = 0.0;
+            for (size_t i = 0; i < block3s; ++i)
+            {
+                float s = getSample(start + i);
+                sumSq += (double)s * (double)s;
+            }
+            double ms = sumSq / (double)block3s;
+            stMeanSq.push_back(ms);
+        }
+
+        // Apply absolute gate
+        std::vector<double> ungated;
+        double ungatedSum = 0.0;
+        for (auto ms : stMeanSq)
+        {
+            if (ms > absGateThreshold)
+            {
+                ungated.push_back(ms);
+                ungatedSum += ms;
+            }
+        }
+
+        if (ungated.size() < 2)
+        {
+            loudnessLRA = 0.0f;
+        }
+        else
+        {
+            // Relative gate at -20 LUFS from ungated mean (EBU R128 uses -20 for LRA)
+            double ungatedMean = ungatedSum / (double)ungated.size();
+            double ungatedLUFS = -0.691 + 10.0 * std::log10(ungatedMean);
+            double relGateThreshold = std::pow(10.0, (ungatedLUFS - 20.0 + 0.691) / 10.0);
+
+            // Apply relative gate and convert to LUFS
+            std::vector<double> gatedLUFS;
+            for (auto ms : ungated)
+            {
+                if (ms > relGateThreshold)
+                {
+                    double lufs = -0.691 + 10.0 * std::log10(ms);
+                    gatedLUFS.push_back(lufs);
+                }
+            }
+
+            if (gatedLUFS.size() < 2)
+            {
+                loudnessLRA = 0.0f;
+            }
+            else
+            {
+                std::sort(gatedLUFS.begin(), gatedLUFS.end());
+
+                // 10th percentile
+                size_t idx10 = (size_t)((double)gatedLUFS.size() * 0.10);
+                if (idx10 >= gatedLUFS.size()) idx10 = gatedLUFS.size() - 1;
+
+                // 95th percentile
+                size_t idx95 = (size_t)((double)gatedLUFS.size() * 0.95);
+                if (idx95 >= gatedLUFS.size()) idx95 = gatedLUFS.size() - 1;
+
+                loudnessLRA = (float)(gatedLUFS[idx95] - gatedLUFS[idx10]);
+                if (loudnessLRA < 0.0f)
+                    loudnessLRA = 0.0f;
+            }
+        }
+    }
 }
 
 //==============================================================================
@@ -843,9 +1215,15 @@ void MainComponent::loadSettings()
     alwaysOnTop = xml->getBoolAttribute("AlwaysOnTop", true);
     singleInstance = xml->getBoolAttribute("SingleInstance", true);
     loadToMemory = xml->getBoolAttribute("LoadToMemory", false);
+    showAllChannels = xml->getBoolAttribute("ShowAllChannels", false);
     volume = xml->getIntAttribute("Volume", 100);
     tempMaxSize = xml->getStringAttribute("TempFolderMaxSize", "1073741824").getLargeIntValue();
     peakMeterWidth = xml->getIntAttribute("PeakMeterWidth", 80);
+
+    // FFT blend slider
+    double savedFftBlend = xml->getDoubleAttribute("FFTBlend", 0.0);
+    fftSlider.setValue(savedFftBlend, juce::dontSendNotification);
+    waveformComponent.setFFTBlend((float)savedFftBlend);
 
     int w = xml->getIntAttribute("WindowWidth", 400);
     int h = xml->getIntAttribute("WindowHeight", 177);
@@ -853,6 +1231,9 @@ void MainComponent::loadSettings()
     int y = xml->getIntAttribute("WindowY", -1);
     setSize(w, h);
     savedWindowBounds = juce::Rectangle<int>(x, y, w, h);
+
+    // Apply showAllChannels to waveform component
+    waveformComponent.setShowAllChannels(showAllChannels);
 
     // Apply always-on-top after a short delay (window may not exist yet)
     juce::Timer::callAfterDelay(100, [this]()
@@ -869,9 +1250,11 @@ void MainComponent::saveSettings()
     xml->setAttribute("AlwaysOnTop", alwaysOnTop);
     xml->setAttribute("SingleInstance", singleInstance);
     xml->setAttribute("LoadToMemory", loadToMemory);
+    xml->setAttribute("ShowAllChannels", showAllChannels);
     xml->setAttribute("Volume", volume);
     xml->setAttribute("TempFolderMaxSize", juce::String(tempMaxSize));
     xml->setAttribute("PeakMeterWidth", peakMeterWidth);
+    xml->setAttribute("FFTBlend", fftSlider.getValue());
     xml->setAttribute("WindowX", savedWindowBounds.getX());
     xml->setAttribute("WindowY", savedWindowBounds.getY());
     xml->setAttribute("WindowWidth", savedWindowBounds.getWidth());
