@@ -10,9 +10,14 @@ public:
 
     void setPanLawGain(float gain) { panLawGain.store(gain, std::memory_order_relaxed); }
 
+    // Set plugin chain for processing (called from MainComponent)
+    void setPluginChain(PluginChainComponent* chain) { pluginChain = chain; }
+
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override
     {
         innerSource->prepareToPlay(samplesPerBlockExpected, sampleRate);
+        if (pluginChain != nullptr)
+            pluginChain->prepareToPlay(sampleRate, samplesPerBlockExpected);
     }
 
     void releaseResources() override
@@ -24,10 +29,32 @@ public:
     {
         innerSource->getNextAudioBlock(info);
 
+        // Pre plugin chain (before pan law / volume)
+        if (pluginChain != nullptr)
+        {
+            juce::AudioBuffer<float> preBuf(info.buffer->getArrayOfWritePointers(),
+                                             info.buffer->getNumChannels(),
+                                             info.startSample,
+                                             info.numSamples);
+            juce::MidiBuffer preMidi;
+            pluginChain->processPreBlock(preBuf, preMidi);
+        }
+
         // Apply pan law gain if set (for mono→stereo)
         float plGain = panLawGain.load(std::memory_order_relaxed);
         if (plGain < 1.0f)
             info.buffer->applyGain(info.startSample, info.numSamples, plGain);
+
+        // Post plugin chain (after pan law / volume)
+        if (pluginChain != nullptr)
+        {
+            juce::AudioBuffer<float> subBuffer(info.buffer->getArrayOfWritePointers(),
+                                                info.buffer->getNumChannels(),
+                                                info.startSample,
+                                                info.numSamples);
+            juce::MidiBuffer midi;
+            pluginChain->processPostBlock(subBuffer, midi);
+        }
 
         int numCh = info.buffer->getNumChannels();
         if (numCh > maxChannels)
@@ -61,6 +88,7 @@ private:
     std::atomic<float> peaks[32] = {};
     std::atomic<int> numActiveChannels{2};
     std::atomic<float> panLawGain{1.0f};
+    PluginChainComponent* pluginChain = nullptr;
 };
 
 // File-scope metering source pointer, managed by MainComponent lifetime
@@ -99,6 +127,57 @@ private:
 };
 
 //==============================================================================
+// ChainSplitterBar - resizer between status bar and plugin chain
+//==============================================================================
+class ChainSplitterBar : public juce::Component
+{
+public:
+    ChainSplitterBar(MainComponent& o) : owner(o)
+    {
+        setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        g.fillAll(juce::Colour(0xff555555));
+    }
+
+    void mouseDown(const juce::MouseEvent&) override
+    {
+        dragStartHeight = owner.pluginChainHeight;
+    }
+
+    void mouseDrag(const juce::MouseEvent& e) override
+    {
+        int newHeight = juce::jlimit(80, 500, dragStartHeight - e.getDistanceFromDragStartY());
+        int delta = newHeight - owner.pluginChainHeight;
+        owner.pluginChainHeight = newHeight;
+
+        // Resize the window to match — grow/shrink upward (top edge moves)
+        if (delta != 0)
+        {
+            if (auto* tlw = owner.getTopLevelComponent())
+            {
+                if (auto* dw = dynamic_cast<juce::DocumentWindow*>(tlw))
+                {
+                    auto wBounds = dw->getBounds();
+                    dw->setBounds(wBounds.getX(),
+                                  wBounds.getY() - delta,
+                                  wBounds.getWidth(),
+                                  wBounds.getHeight() + delta);
+                }
+            }
+        }
+
+        owner.resized();
+    }
+
+private:
+    MainComponent& owner;
+    int dragStartHeight = 200;
+};
+
+//==============================================================================
 // MainComponent
 //==============================================================================
 MainComponent::MainComponent()
@@ -126,6 +205,55 @@ MainComponent::MainComponent()
     addAndMakeVisible(volumeSlider);
     volumeSlider.setPopupDisplayEnabled(true, false, this);
     volumeSlider.setTooltip("Volume: 100");
+
+    // VST Plugin system
+    pluginFormatManager.addDefaultFormats();
+    pluginChainComponent = std::make_unique<PluginChainComponent>(knownPluginList, pluginFormatManager, useJapanese);
+    pluginChainComponent->setVisible(false);
+    addChildComponent(pluginChainComponent.get());
+    pluginChainComponent->onChainChanged = [this]()
+    {
+        if (audioDeviceInitialized)
+        {
+            auto* device = deviceManager.getCurrentAudioDevice();
+            if (device != nullptr)
+                pluginChainComponent->prepareToPlay(device->getCurrentSampleRate(),
+                                                     device->getCurrentBufferSizeSamples());
+        }
+    };
+
+    // VST button (next to FFT slider)
+    vstButton.setButtonText("fx");
+    vstButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff444488));
+    vstButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    vstButton.onClick = [this]()
+    {
+        bool nowExpanded = !pluginChainComponent->isExpanded();
+        int chainHeight = pluginChainHeight + splitterWidth; // chain + splitter bar
+
+        // Set expanded FIRST so resized() knows to allocate space
+        pluginChainComponent->setExpanded(nowExpanded);
+        vstButton.setColour(juce::TextButton::buttonColourId,
+                            nowExpanded ? juce::Colour(0xff6666aa) : juce::Colour(0xff444488));
+
+        // Then resize the window (triggers resized() with correct expanded state)
+        if (auto* tlw = getTopLevelComponent())
+        {
+            if (auto* dw = dynamic_cast<juce::DocumentWindow*>(tlw))
+            {
+                auto wBounds = dw->getBounds();
+                if (nowExpanded)
+                    dw->setBounds(wBounds.withHeight(wBounds.getHeight() + chainHeight));
+                else
+                    dw->setBounds(wBounds.withHeight(wBounds.getHeight() - chainHeight));
+            }
+        }
+
+        // Force layout update
+        resized();
+    };
+    vstButton.setTooltip("VST Plugin Chain");
+    addAndMakeVisible(vstButton);
 
     // FFT blend slider
     fftSlider.setRange(0.0, 1.0, 0.01);
@@ -202,6 +330,10 @@ MainComponent::MainComponent()
     resizerBar = std::make_unique<SplitterBar>(*this);
     addAndMakeVisible(resizerBar.get());
 
+    // Resizer bar between status bar and plugin chain
+    chainResizerBar = std::make_unique<ChainSplitterBar>(*this);
+    addChildComponent(chainResizerBar.get()); // hidden until chain is expanded
+
     // Load saved settings
     loadSettings();
 
@@ -223,6 +355,7 @@ MainComponent::MainComponent()
             if (!audioDeviceInitialized)
             {
                 s_meteringSource = std::make_unique<MeteringSource>(&transportSource);
+                s_meteringSource->setPluginChain(pluginChainComponent.get());
                 sourcePlayer.setSource(s_meteringSource.get());
                 deviceManager.addAudioCallback(&sourcePlayer);
                 audioDeviceInitialized = true;
@@ -235,6 +368,11 @@ MainComponent::~MainComponent()
 {
     saveSettings();
     stopTimer();
+
+    // Release plugin chain before audio system
+    if (pluginChainComponent)
+        pluginChainComponent->releaseResources();
+
     transportSource.setSource(nullptr);
 
     if (audioDeviceInitialized)
@@ -256,6 +394,7 @@ void MainComponent::initAudioDevice()
         deviceManager.initialiseWithDefaultDevices(0, 2);
 
     s_meteringSource = std::make_unique<MeteringSource>(&transportSource);
+    s_meteringSource->setPluginChain(pluginChainComponent.get());
     sourcePlayer.setSource(s_meteringSource.get());
     deviceManager.addAudioCallback(&sourcePlayer);
     audioDeviceInitialized = true;
@@ -271,26 +410,41 @@ void MainComponent::resized()
 {
     auto bounds = getLocalBounds();
 
-    // Menu bar at top (24px) with sliders on the right side
+    // Menu bar at top (24px) with sliders and VST button on the right side
     auto menuArea = bounds.removeFromTop(24);
 
-    // Right side of menu bar: "Vol" label area + volumeSlider + "FFT" label area + fftSlider
-    // Total right area: ~200px
-    int sliderAreaWidth = 200;
+    // Right side: Vol slider + FFT slider + VST button
+    int sliderAreaWidth = 216; // 90 + 4 + 90 + 4 + 24
     auto sliderBarArea = menuArea.removeFromRight(sliderAreaWidth);
 
     // Menu bar gets the rest
     menuBar.setBounds(menuArea);
 
-    // Layout sliders inside sliderBarArea
-    // "Vol" (20px) + volumeSlider (80px) + gap (4px) + "FFT" (0px) + fftSlider (80px)
-    // We skip text labels to save space and rely on tooltips
     auto volArea = sliderBarArea.removeFromLeft(90);
-    sliderBarArea.removeFromLeft(4); // gap
+    sliderBarArea.removeFromLeft(4);
     auto fftArea = sliderBarArea.removeFromLeft(90);
+    sliderBarArea.removeFromLeft(4);
+    auto vstArea = sliderBarArea.removeFromLeft(24);
 
     volumeSlider.setBounds(volArea.reduced(0, 3));
     fftSlider.setBounds(fftArea.reduced(0, 3));
+    vstButton.setBounds(vstArea.reduced(0, 2));
+
+    // Plugin chain panel (very bottom of window, below everything)
+    if (pluginChainComponent && pluginChainComponent->isExpanded())
+    {
+        auto chainArea = bounds.removeFromBottom(pluginChainHeight);
+        pluginChainComponent->setBounds(chainArea);
+
+        // Chain splitter bar (4px between status bar and chain)
+        auto chainSplitArea = bounds.removeFromBottom(splitterWidth);
+        chainResizerBar->setBounds(chainSplitArea);
+        chainResizerBar->setVisible(true);
+    }
+    else if (chainResizerBar)
+    {
+        chainResizerBar->setVisible(false);
+    }
 
     // Status bar at bottom (22px) - 3 sections
     auto statusArea = bounds.removeFromBottom(22);
@@ -365,6 +519,10 @@ juce::PopupMenu MainComponent::getMenuForIndex(int menuIndex, const juce::String
 
         tempMenu.addSubMenu(tr("Max Temp Size", "\xe4\xb8\x80\xe6\x99\x82\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab\xe6\x9c\x80\xe5\xa4\xa7\xe3\x82\xb5\xe3\x82\xa4\xe3\x82\xba"), sizeMenu);
         menu.addSubMenu(tr("Temp File Management", "\xe4\xb8\x80\xe6\x99\x82\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab\xe7\xae\xa1\xe7\x90\x86"), tempMenu);
+
+        // Plugin scanner
+        menu.addSeparator();
+        menu.addItem(idPluginScanner, tr("Plugin...", "\xe3\x83\x97\xe3\x83\xa9\xe3\x82\xb0\xe3\x82\xa4\xe3\x83\xb3..."));
 
         // Language submenu
         menu.addSeparator();
@@ -474,6 +632,10 @@ void MainComponent::menuItemSelected(int menuItemID, int /*topLevelMenuIndex*/)
                 transportSource.setPosition(pos);
                 if (wasPlaying) play();
             }
+            break;
+
+        case idPluginScanner:
+            PluginScannerWindow::show(knownPluginList, pluginFormatManager, useJapanese);
             break;
 
         case idLangEnglish:
@@ -1283,11 +1445,38 @@ void MainComponent::loadSettings()
     volume = xml->getIntAttribute("Volume", 100);
     tempMaxSize = xml->getStringAttribute("TempFolderMaxSize", "1073741824").getLargeIntValue();
     peakMeterWidth = xml->getIntAttribute("PeakMeterWidth", 80);
+    pluginChainHeight = xml->getIntAttribute("PluginChainHeight", 200);
+
+    // Plugin chain expanded state
+    bool chainExpanded = xml->getBoolAttribute("PluginChainExpanded", false);
+    if (pluginChainComponent)
+    {
+        pluginChainComponent->setExpanded(chainExpanded);
+        vstButton.setColour(juce::TextButton::buttonColourId,
+                            chainExpanded ? juce::Colour(0xff6666aa) : juce::Colour(0xff444488));
+    }
 
     // FFT blend slider
     double savedFftBlend = xml->getDoubleAttribute("FFTBlend", 0.0);
     fftSlider.setValue(savedFftBlend, juce::dontSendNotification);
     waveformComponent.setFFTBlend((float)savedFftBlend);
+
+    // Load plugin cache (for known plugin list)
+    {
+        auto cacheFile = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+                             .getParentDirectory().getChildFile("plugincache.xml");
+        if (cacheFile.existsAsFile())
+        {
+            if (auto cacheXml = juce::parseXML(cacheFile))
+            {
+                if (auto* pluginsElem = cacheXml->getChildByName("KnownPlugins"))
+                {
+                    if (pluginsElem->getNumChildElements() > 0)
+                        knownPluginList.recreateFromXml(*pluginsElem->getFirstChildElement());
+                }
+            }
+        }
+    }
 
     int w = xml->getIntAttribute("WindowWidth", 400);
     int h = xml->getIntAttribute("WindowHeight", 177);
@@ -1320,7 +1509,10 @@ void MainComponent::saveSettings()
     xml->setAttribute("Volume", volume);
     xml->setAttribute("TempFolderMaxSize", juce::String(tempMaxSize));
     xml->setAttribute("PeakMeterWidth", peakMeterWidth);
+    xml->setAttribute("PluginChainHeight", pluginChainHeight);
+    xml->setAttribute("PluginChainExpanded", pluginChainComponent ? pluginChainComponent->isExpanded() : false);
     xml->setAttribute("FFTBlend", fftSlider.getValue());
+
     xml->setAttribute("WindowX", savedWindowBounds.getX());
     xml->setAttribute("WindowY", savedWindowBounds.getY());
     xml->setAttribute("WindowWidth", savedWindowBounds.getWidth());

@@ -19,6 +19,8 @@ target_sources(pbAudioPlayer
         Source/WaveformComponent.cpp
         Source/PeakMeterComponent.cpp
         Source/TimeScaleComponent.cpp
+        Source/PluginScannerWindow.cpp
+        Source/PluginChainComponent.cpp
         icon.rc
 )
 
@@ -26,6 +28,7 @@ target_compile_definitions(pbAudioPlayer
     PRIVATE
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
+        JUCE_PLUGINHOST_VST3=1
         NOMINMAX=1
 )
 
@@ -36,6 +39,7 @@ target_link_libraries(pbAudioPlayer
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats
+        juce::juce_audio_processors
         juce::juce_audio_utils
         juce::juce_core
         juce::juce_events

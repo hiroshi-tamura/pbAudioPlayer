@@ -3,6 +3,8 @@
 #include "WaveformComponent.h"
 #include "PeakMeterComponent.h"
 #include "TimeScaleComponent.h"
+#include "PluginScannerWindow.h"
+#include "PluginChainComponent.h"
 
 class MainComponent : public juce::Component,
                       public juce::MenuBarModel,
@@ -40,6 +42,7 @@ public:
 
     // For SplitterBar access
     int peakMeterWidth = 80;
+    int pluginChainHeight = 200;
 
     // Settings access for Main.cpp
     bool isSingleInstance() const { return singleInstance; }
@@ -65,10 +68,17 @@ private:
     TimeScaleComponent timeScaleComponent;
     juce::Slider volumeSlider;
     juce::Slider fftSlider;
+    juce::TextButton vstButton;
     juce::Label statusLeftLabel;
     juce::Label statusRightLabel;
     juce::Label statusLoudnessLabel;
     std::unique_ptr<juce::Component> resizerBar;
+    std::unique_ptr<juce::Component> chainResizerBar;
+
+    // VST Plugin system
+    juce::AudioPluginFormatManager pluginFormatManager;
+    juce::KnownPluginList knownPluginList;
+    std::unique_ptr<PluginChainComponent> pluginChainComponent;
 
     // Audio data
     std::vector<float> monoSamples;
@@ -147,7 +157,8 @@ private:
         idAbout,
         idLangEnglish,
         idLangJapanese,
-        idPanLawMono
+        idPanLawMono,
+        idPluginScanner
     };
 
     // Localization helper
